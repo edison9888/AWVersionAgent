@@ -1,6 +1,11 @@
 AWVersionAgent
 ----
 
+修改日志：
+
+1. 将本地通知改为进入时弹AlertView.
+2. 加入自定义更新方式
+
 There is so many update checker using `UIAlertView` to notify user to upgrade your app, but the alert will stop user's action. `AWVersionAgent` will check new version in background and notify user that new version is available from Local Notification.
 
 Usage:

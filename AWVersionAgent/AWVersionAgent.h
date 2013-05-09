@@ -7,14 +7,20 @@
 //
 
 #import <Foundation/Foundation.h>
+#import "MMInterface.h"
 
-@interface AWVersionAgent : NSObject
+#define UPDATE_FOR_APPSTORE 1
+#define UPDATE_FOR_MYSERVER 2
+
+@interface AWVersionAgent : NSObject<InterfaceDelegate,UIAlertViewDelegate>
 
 + (AWVersionAgent *)sharedAgent;
 
 @property (nonatomic) BOOL debug;
 
-- (void)checkNewVersionForApp:(NSString *)appid;
-- (void)upgradeAppWithNotification:(UILocalNotification *)notification;
+//1. 走appstore, 2走我们的服务器
+@property (nonatomic,assign) int updateType;
+
+-(void)checkNewVersion;
 
 @end

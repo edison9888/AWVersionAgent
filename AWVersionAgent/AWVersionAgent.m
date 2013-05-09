@@ -10,6 +10,8 @@
 
 #import "JSONKit.h"
 
+
+
 #define kAppleLookupURLTemplate     @"http://itunes.apple.com/lookup?id=%@"
 #define kAppStoreURLTemplate        @"itms-apps://itunes.apple.com/app/id%@"
 
@@ -43,6 +45,7 @@
 - (void)dealloc
 {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [super dealloc];
 }
 
 - (id)init
@@ -51,6 +54,18 @@
     if (self) {
         _newVersionAvailable = NO;
         _debug = NO;
+        
+        NSDictionary* infoDict = [[NSBundle mainBundle] infoDictionary];
+        NSString* AppChannelID = [infoDict objectForKey:@"AppChannelID"];
+        NSString* AppStoreId = [infoDict objectForKey:@"AppStoreId"];
+        self.appid = AppStoreId;
+        
+        if ([AppChannelID isEqualToString:@"1"]) {
+            //查询appstore是否有更新
+            self.updateType = UPDATE_FOR_APPSTORE   ;
+        } else {
+            self.updateType = UPDATE_FOR_MYSERVER   ;
+        }
 
         [[NSNotificationCenter defaultCenter] addObserver:self
                                                  selector:@selector(showUpgradeNotification)
@@ -61,11 +76,74 @@
     return self;
 }
 
+-(void)showUpdateAlert {
+    NSString *url = [Api loadRms:@"kAppNewVersionUrl"];
+    
+    if ([url length]>10){
+    NSDictionary* infoDict = [[NSBundle mainBundle] infoDictionary];
+    NSString* appName = [infoDict objectForKey:@"CFBundleDisplayName"];
+    NSString *msg = [NSString stringWithFormat:@"%@有新版本，是否去更新？",appName];
+    
+    UIAlertView *alertView = [[UIAlertView alloc] initWithTitle:@"升级提醒"
+                                                        message:msg
+                                                       delegate:self
+                                              cancelButtonTitle:@"升级"
+                                              otherButtonTitles:@"下次再说", nil];
+    
+    [alertView show];
+    }
+}
+
+- (void)alertView:(UIAlertView *)alertView clickedButtonAtIndex:(NSInteger)buttonIndex {
+    
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
+    [defaults setDouble:now forKey:kAWVersionAgentLastNotificationDateKey];
+    [defaults synchronize];
+    NSString *url = [Api loadRms:@"kAppNewVersionUrl"];
+    [Api saveRms:@"kAppNewVersionUrl" value:@""];
+    [Api saveAll];
+    
+    if (buttonIndex==0) {//升级
+        [[UIApplication sharedApplication] openURL:[NSURL URLWithString:url]];
+    }
+    
+}
+
+-(void)checkNewVersion {
+    [self showUpdateAlert];
+    if (self.updateType == UPDATE_FOR_APPSTORE) {
+        if ([self.appid length]>3) {
+            [self checkNewVersionForApp:self.appid];
+        }
+    } else {
+        MMInterface *it = [[[MMInterface alloc]initWithDelegate:self]autorelease];
+        [it getNewestVersionInfo];
+    }
+}
+
+-(void)onSuccess:(NSDictionary *)data tag:(int)tag {
+    if (tag == getNewestVersionInfo_TAG) {
+        int hashCode = [data getIntValueForKey:@"ipaversion"];
+        NSString *appVersion = [Api loadRms:@"app_version"];
+        int oldHashCode = [Api hashCode:appVersion];
+        NSLog(@"oldHashCode = %d,hashCode=%d, appVersion=%@",oldHashCode,hashCode,appVersion);
+        
+        NSString *new_version_url = @"";
+        if (oldHashCode != hashCode) {
+            new_version_url = [data getStringValueForKey:@"ipaurl" def:@""];
+            [[NSUserDefaults standardUserDefaults] setObject:[NSString stringWithFormat:@"itms-services://?action=download-manifest&url=%@", new_version_url]
+                                                      forKey:@"kAppNewVersionUrl"];
+            [[NSUserDefaults standardUserDefaults] synchronize];
+            self.newVersionAvailable = YES;
+        }
+    }
+}
+
 - (void)checkNewVersionForApp:(NSString *)appid
 {
-    self.appid = appid;
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        NSString *url = [NSString stringWithFormat:kAppleLookupURLTemplate, _appid];
+        NSString *url = [NSString stringWithFormat:kAppleLookupURLTemplate, self.appid];
         NSData *data = [NSData dataWithContentsOfURL:[NSURL URLWithString:url]];
         if (data && [data length]>0) {
             id obj = [data objectFromJSONData];
@@ -110,36 +188,18 @@
     return _newVersionAvailable;
 }
 
-- (void)showUpgradeNotification
-{
+- (void)showUpgradeNotification {
     if ([self conditionHasBeenMet]) {
-        UILocalNotification *notification = [[UILocalNotification alloc] init];
-        notification.fireDate = [[NSDate date] dateByAddingTimeInterval:kUpgradeAlertDelay];
-        notification.timeZone = [NSTimeZone defaultTimeZone];
-        NSString *curVersion = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleVersion"];
-        NSString *newVersion = [[NSUserDefaults standardUserDefaults] objectForKey:@"kAppNewVersion"];
-        NSString *msg = [NSString stringWithFormat:kUpgradeAlertMessage,
-                         curVersion, newVersion];
-        notification.alertBody = msg;
-        notification.alertAction = kUpgradeAlertAction;
-        [[UIApplication sharedApplication] scheduleLocalNotification:notification];
-
-        [[NSUserDefaults standardUserDefaults] setDouble:[[NSDate date] timeIntervalSince1970]
-                                                  forKey:kAWVersionAgentLastNotificationDateKey];
-        [[NSUserDefaults standardUserDefaults] synchronize];
+        NSString *newVersionUrl = [[NSUserDefaults standardUserDefaults] objectForKey:@"kAppNewVersionUrl"];
+        if (self.updateType==UPDATE_FOR_APPSTORE) {
+            newVersionUrl = [NSString stringWithFormat:kAppStoreURLTemplate, self.appid];
+        }
+        
+        [Api saveRms:@"kAppNewVersionUrl" value:newVersionUrl];
+        NSLog(@"newVersinUrl = %@",newVersionUrl);
+        [Api saveAll];
     }
 }
 
-- (void)upgradeAppWithNotification:(UILocalNotification *)notification
-{
-    if ([notification.alertAction isEqualToString:kUpgradeAlertAction]) {
-        [[UIApplication sharedApplication] cancelLocalNotification:notification];
-
-        NSString *url = [NSString stringWithFormat:kAppStoreURLTemplate, _appid];
-        [[UIApplication sharedApplication] openURL:[NSURL URLWithString:url]];
-
-        self.newVersionAvailable = NO;
-    }
-}
 
 @end
